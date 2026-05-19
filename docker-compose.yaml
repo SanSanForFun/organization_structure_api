@@ -1,82 +1,38 @@
-
 services:
-  web:
-    build: .
-    command: sh -c "python manage.py collectstatic --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:8000"
-    volumes:
-      - .:/app
-      - static_volume:/app/staticfiles
-    ports:
-      - "8000:8000"
-    depends_on:
-      - db
-      - redis
-    env_file:
-      - ./.env
-
-  nginx:
-    image: nginx
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
-      - static_volume:/app/staticfiles
-    depends_on:
-      - web
-
   db:
-    image: postgres:17
+    image: postgres:15-alpine
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-habit}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-djz89qdj}
+      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
     env_file:
       - ./.env
+    ports:
+      - "5432:5432"
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres" ]
-      interval: 30s
-      timeout: 10s
+      interval: 5s
+      timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7
-    volumes:
-      - redis_data:/var/lib/redis/data
-    env_file:
-      - ./.env
-#    ports:
-#      - "6379:6379"
-
-  celery:
-    build:
-      context: .
-      dockerfile: Dockerfile_celery
-    command: celery -A config worker --loglevel=info
+  web:
+    build: .
     volumes:
       - .:/app
+    ports:
+      - "8000:8000"
     env_file:
       - ./.env
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings
     depends_on:
-      - db
-      - redis
-
-
-  celery-beat:
-    build:
-      context: .
-      dockerfile: Dockerfile_celery
-    command: celery -A config beat --loglevel=info
-    volumes:
-      - .:/app
-    env_file:
-      - ./.env
-    depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --reload"
 
 volumes:
   postgres_data:
-  static_volume:
-  redis_data:
