@@ -5,11 +5,17 @@ from rest_framework.response import Response
 from django.db import transaction
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class EmployeeCreateAPIView(generics.CreateAPIView):
     queryset = Employee.objects.all()
     serializer_class = EmployeeSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(department_id_id=self.kwargs['id'])
 
 
 class DepartmentListAPIView(generics.ListAPIView):
@@ -20,6 +26,11 @@ class DepartmentListAPIView(generics.ListAPIView):
 class DepartmentCreateAPIView(generics.CreateAPIView):
     queryset = Department.objects.all()
     serializer_class = DepartmentSerializer
+
+    # Логированиие
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        logger.info(f" Создано подразделение: '{instance.name}' (ID: {instance.pk}) пользователем {self.request.user}")
 
 
 class DepartmentRetrieveAPIView(generics.RetrieveAPIView):
@@ -34,6 +45,12 @@ class DepartmentUpdateAPIView(generics.UpdateAPIView):
     serializer_class = DepartmentSerializer
     lookup_field = 'id'
     http_method_names = ['patch']
+
+    # Логирование
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        logger.info(
+            f" Обновлено подразделение: '{instance.name}' (ID: {instance.pk}) пользователем {self.request.user}")
 
 
 class DepartmentDestroyAPIView(generics.DestroyAPIView):
@@ -68,34 +85,33 @@ class DepartmentDestroyAPIView(generics.DestroyAPIView):
     def delete(self, request, *args, **kwargs):
         mode = request.query_params.get('mode')
         if mode not in ('cascade', 'reassign'):
-            return Response(
-                {'detail': 'Укажите mode=cascade или mode=reassign'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'detail': 'Укажите mode=cascade или mode=reassign'}, status=status.HTTP_400_BAD_REQUEST)
 
         reassign_id = request.query_params.get('reassign_to_department_id')
         if mode == 'reassign' and not reassign_id:
-            return Response(
-                {'detail': 'При mode=reassign обязателен reassign_to_department_id'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'detail': 'При mode=reassign обязателен reassign_to_department_id'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         dept = self.get_object()
+        # Логирование
+        logger.warning(
+            f"Удаление подразделения: '{dept.name}' (ID: {dept.pk}) пользователем {request.user}. Режим: {mode}")
 
         with transaction.atomic():
-            if mode == 'reassign':
+            if mode == 'cascade':
+                dept.children.all().delete()
+
+            elif mode == 'reassign':
                 try:
                     target = Department.objects.get(pk=reassign_id)
                 except Department.DoesNotExist:
-                    return Response(
-                        {'detail': 'Целевое подразделение не найдено'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+                    return Response({'detail': 'Целевое подразделение не найдено'}, status=status.HTTP_400_BAD_REQUEST)
 
-                # Переводим сотрудников
-                Employee.objects.filter(department=dept).update(department=target)
-                # Удаляем дочерние отделы
+                Employee.objects.filter(department_id=dept).update(department_id=target)
                 dept.children.all().delete()
+
+                # Логирование
+                logger.info(f"Сотрудники переведены в отдел '{target.name}' (ID: {target.pk})")
 
             dept.delete()
 
