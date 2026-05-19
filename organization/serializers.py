@@ -8,6 +8,12 @@ class EmployeeSerializer(serializers.ModelSerializer):
         fields = ['id', 'full_name', 'position', 'hired_at', 'created_at', ]
         read_only_fields = ('id', 'created_at',)
 
+    @staticmethod
+    def validate_department_id(value):
+        if value is not None and not Department.objects.filter(pk=value.pk).exists():
+            raise serializers.ValidationError("Нельзя создать сотрудника в несуществующем подразделении.")
+        return value
+
 
 class DepartmentSerializer(serializers.ModelSerializer):
     parent_id = serializers.PrimaryKeyRelatedField(
@@ -21,6 +27,23 @@ class DepartmentSerializer(serializers.ModelSerializer):
         model = Department
         fields = ['id', 'name', 'parent_id', 'created_at', ]
         read_only_fields = ('id', 'created_at',)
+
+    def validate_parent_id(self, value):
+        if value is None:
+            return value
+
+        instance = self.instance
+
+        if instance and instance.pk == value.pk:
+            raise serializers.ValidationError("Подразделение не может быть родителем самого себя.")
+
+        current = value
+        while current.parent_id is not None:
+            if instance and current.parent_id.pk == instance.pk:
+                raise serializers.ValidationError("Создание цикла в дереве подразделений запрещено.")
+            current = current.parent_id
+
+        return value
 
 
 class DepartmentDetailSerializer(serializers.ModelSerializer):
